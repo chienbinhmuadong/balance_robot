@@ -1,0 +1,230 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+    <model name='simple_robot'>
+
+        <!-- ................. -->
+        <!-- ..... LINKS ..... -->
+        <!-- ................. -->
+        <link name='core'>
+            <pose relative_to='__model__'> 0 0 0 0 0 0</pose>
+            <inertial>
+                <mass>1.5</mass>
+                <!-- <pose>0 0.020 5 0 0 0</pose> -->
+                <pose>0 0.020 0.042686 0 0 0</pose>
+                <inertia>
+                    <ixx>0.005</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.005</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.005</izz>
+                </inertia>
+            </inertial>
+            <visual name='visual'>
+                <geometry>
+                    <mesh>
+                        <uri>model://simple_robot/meshes/collision/core.stl</uri>
+                        <scale>0.001 0.001 0.001</scale>
+                    </mesh>
+                </geometry>
+                <material>
+                    <ambient>0 0 1.0 1</ambient>
+                    <diffuse>0 0 1.0 1</diffuse>
+                    <specular>0 0 1.0 1</specular>
+                </material>
+            </visual>
+            <collision name='collision'>
+                <geometry>
+                    <mesh>
+                        <uri>model://simple_robot/meshes/collision/core.stl</uri>
+                        <scale>0.001 0.001 0.001</scale>
+                    </mesh>
+                </geometry>
+            </collision>
+            <sensor name='gpu_lidar' type='gpu_lidar'>
+                <pose>0 0 0.1 0 0 1.5708</pose>
+                <topic>/simple_robot/laser_scan</topic>
+                <update_rate>10</update_rate>
+                <lidar>
+                    <scan>
+                        <horizontal>
+                            <samples>640</samples>
+                            <resolution>1</resolution>
+                            <min_angle>-1.396263</min_angle>
+                            <max_angle>1.396263</max_angle>
+                        </horizontal>
+                        <vertical>
+                            <samples>16</samples>
+                            <resolution>1</resolution>
+                            <min_angle>-0.261799</min_angle>
+                            <max_angle>0.261799</max_angle>
+                        </vertical>
+                    </scan>
+                    <range>
+                        <min>0.08</min>
+                        <max>10.0</max>
+                        <resolution>0.01</resolution>
+                    </range>
+                </lidar>
+                <alwaysOn>true</alwaysOn>
+                <visualize>true</visualize>
+            </sensor>
+            <sensor name="imu" type="imu">
+                <topic>/simple_robot/imu</topic>
+                <always_on>true</always_on>
+                <update_rate>100</update_rate>
+                <visualize>true</visualize>
+              </sensor>
+        </link>
+
+        <link name='left_wheel'>
+            <pose relative_to="__model__">0 0 0 0 0 0</pose> 
+            <inertial>
+                <pose>-0.09610 0.020 0.029 0 0 0</pose>
+                <mass>0.25</mass>
+                <inertia>
+                    <ixx>0.000015498371</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.000008440253</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.000008440255</izz>
+                </inertia>
+            </inertial>
+            <visual name='visual'>
+                <geometry>
+                    <mesh>
+                        <uri>model://simple_robot/meshes/collision/left_wheel.stl</uri>
+                        <scale>0.001 0.001 0.001</scale>
+                    </mesh>
+                </geometry>
+                <material>
+                    <ambient>1.0 0 0 1</ambient>
+                    <diffuse>1.0 0 0 1</diffuse>
+                    <specular>1.0 0 0 1</specular>
+                </material>
+            </visual>
+            <collision name='collision'>
+                <geometry>
+                    <mesh>
+                        <uri>model://simple_robot/meshes/collision/left_wheel.stl</uri>
+                        <scale>0.001 0.001 0.001</scale>
+                    </mesh>
+                </geometry>
+            </collision>
+        </link>
+
+        <link name='right_wheel'>
+            <pose relative_to="__model__">0 0 0 0 0 0</pose> 
+            <inertial>
+                <pose>0.09610 0.020 0.029 0 0 0</pose>
+                <mass>0.25</mass>
+                <inertia>
+                    <ixx>0.000015498371</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.000008440253</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.000008440255</izz>
+                </inertia>
+            </inertial>
+            <visual name='visual'>
+                <geometry>
+                    <mesh>
+                        <uri>model://simple_robot/meshes/collision/right_wheel.stl</uri>
+                        <scale>0.001 0.001 0.001</scale>
+                    </mesh>
+                </geometry>
+                <material>
+                    <ambient>1.0 0 0 1</ambient>
+                    <diffuse>1.0 0 0 1</diffuse>
+                    <specular>1.0 0 0 1</specular>
+                </material>
+            </visual>
+            <collision name='collision'>
+                <geometry>
+                    <mesh>
+                        <uri>model://simple_robot/meshes/collision/right_wheel.stl</uri>
+                        <scale>0.001 0.001 0.001</scale>
+                    </mesh>
+                </geometry>
+            </collision>
+        </link>
+
+        
+        <!-- .................. -->
+        <!-- ..... JOINTS ..... -->
+        <!-- .................. -->
+        <!--left wheel joint-->
+        <joint name='left_wheel_joint' type='revolute'>
+            <pose relative_to='__model__'> 0 0.020 0.029 0 0 0</pose>
+            <parent>core</parent>
+            <child>left_wheel</child>
+            <axis>
+                <xyz expressed_in='__model__'>1 0 0</xyz> <!--can be descired to any frame or even arbitrary frames-->
+                <limit>
+                    <lower>-1.79769e+308</lower>    <!--negative infinity-->
+                    <upper>1.79769e+308</upper>     <!--positive infinity-->
+                </limit>
+            </axis>
+        </joint>
+
+        <!--right wheel joint-->
+        <joint name='right_wheel_joint' type='revolute'>
+            <pose relative_to='__model__'> 0 0.020 0.029 0 0 0</pose>
+            <parent>core</parent>
+            <child>right_wheel</child>
+            <axis>
+                <xyz expressed_in='__model__'>1 0 0</xyz>
+                <limit>
+                    <lower>-1.79769e+308</lower>    <!--negative infinity-->
+                    <upper>1.79769e+308</upper>     <!--positive infinity-->
+                </limit>
+            </axis>
+        </joint>   
+        
+        
+        <!-- ................... -->
+        <!-- ..... PLUGINS ..... -->
+        <!-- ................... -->
+        <!-- <plugin
+            filename="libignition-gazebo-diff-drive-system.so"
+            name="ignition::gazebo::systems::DiffDrive">
+            <left_joint>left_wheel_joint</left_joint>
+            <right_joint>right_wheel_joint</right_joint>
+            <wheel_separation>10e-3</wheel_separation>
+            <wheel_radius>15e-3</wheel_radius>
+            <odom_publish_frequency>1</odom_publish_frequency>
+            <topic>/simple_robot/cmd_vel</topic>
+            <odom_topic>/simple_robot/odometry</odom_topic>
+        </plugin> -->
+
+        <!--Plugin doc encoder Jointstatepublisher--> 
+        <plugin
+            filename="libignition-gazebo-joint-state-publisher-system.so"
+            name="ignition::gazebo::systems::JointStatePublisher">
+            <joint_name>left_wheel_joint</joint_name>
+            <joint_name>right_wheel_joint</joint_name>
+            <topic>/simple_robot/joint_states</topic>
+        </plugin>
+
+        <!--plugin truyen luc cho banh trai Apply Joint Force-->
+        <plugin
+            filename="libignition-gazebo-apply-joint-force-system.so"
+            name="ignition::gazebo::systems::ApplyJointForce">
+            <joint_name>left_wheel_joint</joint_name>
+        </plugin>
+        
+        <!--plugin truyen luc cho banh phai Apply Joint Force-->
+        <plugin
+            filename="libignition-gazebo-apply-joint-force-system.so"
+            name="ignition::gazebo::systems::ApplyJointForce">
+            <joint_name>right_wheel_joint</joint_name>
+        </plugin>
+
+        <!--plugin cho IMU-->
+        <plugin filename="libignition-gazebo-imu-system.so"
+        name="ignition::gazebo::systems::Imu">
+        </plugin>
+    </model>
+</sdf>
