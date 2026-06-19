@@ -18,7 +18,8 @@ setup(
         (os.path.join('share', package_name, 'models/simple_robot/meshes/collision'), glob('models/simple_robot/meshes/collision/*')),
         (os.path.join('share', package_name, 'models/simple_robot/meshes/visual'), glob('models/simple_robot/meshes/visual/*')),
         (os.path.join('share', package_name, 'models/simple_robot/thumbnails'), glob('models/simple_robot/thumbnails/*')),
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml'))
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'worlds'), glob('worlds/*.sdf'))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
