@@ -3,38 +3,60 @@ from rclpy.node import Node
 import math
 import numpy as np
 
-# Import các kiểu tin nhắn (Messages) từ ROS 2
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, LaserScan
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
+
+import csv
 
 class StateEstimatorNode(Node):
     def __init__(self):
         super().__init__('controller')
 
-        self.R = 0.015  # Bán kính bánh xe (m)
+        self.R = 0.015  # Bán kính bánh xe
 
         self.state = np.zeros(4)
         self.yaw = 0.0
+        self.yaw_dot = 0.0 
         
-        # --- BIẾN QUẢN LÝ TRẠNG THÁI (STATE MACHINE) ---
-        self.robot_state = 'MOVING' # Chế độ hiện tại: 'MOVING' hoặc 'STOPPED'
-        self.start_a = 0.0          # Mốc vị trí bắt đầu đoạn đường 2m
-        self.stop_a = 0.0           # Vị trí chốt để giữ thăng bằng khi dừng
-        self.t_start_move = None    # Mốc thời gian bắt đầu di chuyển
-        self.t_start_stop = None    # Mốc thời gian bắt đầu dừng
+        # khởi tạo tọa độ
+        self.x = 0.0
+        self.y = 0.0
+        self.last_a = 0.0       
+        self.target_x = 1.0     
+        self.target_y = 1.0     
         
-        # regulator K
+        self.robot_state = 'MOVING' 
+        self.stop_a = 0.0 
+        self.stop_yaw = 0.0
+        
+        # parameter LQR
         self.K1 = np.array([0.0387, 0.0792, 0.3590, 0.0694])
-        self.K2 = np.array([-0.1483, -0.3034, -0.2363, 0.000])
+        self.K_fwd = 0.05 
+        self.constant_v = 0.45 
+        self.K_omega = 0.5   
+        self.K_yaw_rate = 0.1
+
+        # config APF
+        self.d0 = 0.6 
+        self.K_att = 1.0
+        self.K_rep = 0.05
+        self.laser_data = None
+
+        # record coordinates
+        self.csv_file = open('robot_trajectory_with_obstacle.csv', mode='w', newline='')
+        self.csv_writer = csv.writer(self.csv_file)
+        self.csv_writer.writerow(['x', 'y'])
 
         self.imu_subscriber = self.create_subscription(Imu, '/simple_robot/imu', self.imu_callback, 10)
         self.joint_subscriber = self.create_subscription(JointState, '/simple_robot/joint_states', self.joint_callback, 10)
+        self.lidar_subcriber = self.create_subscription(LaserScan, '/simple_robot/laser_scan', self.lidar_callback, 10)
 
         self.left_force_pub = self.create_publisher(Float64, '/model/simple_robot/joint/left_wheel_joint/cmd_force', 10)
         self.right_force_pub = self.create_publisher(Float64, '/model/simple_robot/joint/right_wheel_joint/cmd_force', 10)
         
         self.timer = self.create_timer(0.01, self.controller)
+        self.log_counter = 0
 
     def imu_callback(self, msg):
         q = msg.orientation
@@ -44,101 +66,171 @@ class StateEstimatorNode(Node):
 
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-        self.yaw = math.atan2(siny_cosp, cosy_cosp)
-        
-        phi_dot = msg.angular_velocity.x
+        self.yaw = math.atan2(siny_cosp, cosy_cosp) + (math.pi/2.0)
+        while self.yaw > math.pi: self.yaw -= 2.0 * math.pi
+        while self.yaw < -math.pi: self.yaw += 2.0 * math.pi
+
         self.state[2] = phi
-        self.state[3] = phi_dot
+        self.state[3] = msg.angular_velocity.x
+        self.yaw_dot = msg.angular_velocity.z
 
     def joint_callback(self, msg):
-        try:
-            left_idx = msg.name.index('left_wheel_joint')
-            right_idx = msg.name.index('right_wheel_joint')
+        left_idx = msg.name.index('left_wheel_joint')
+        right_idx = msg.name.index('right_wheel_joint')
 
-            theta_avg = (msg.position[left_idx] + msg.position[right_idx]) / 2.0
-            theta_dot_avg = (msg.velocity[left_idx] + msg.velocity[right_idx]) / 2.0
+        theta_avg = (msg.position[left_idx] + msg.position[right_idx]) / 2.0
+        theta_dot_avg = (msg.velocity[left_idx] + msg.velocity[right_idx]) / 2.0
 
-            self.state[0] = self.R * theta_avg
-            self.state[1] = self.R * theta_dot_avg
-        except ValueError:
-            pass
+        self.state[0] = self.R * theta_avg
+        self.state[1] = self.R * theta_dot_avg
+        
+        # odometry
+        ds = -(self.state[0] - self.last_a)
+        self.x += ds * math.cos(self.yaw)
+        self.y += ds * math.sin(self.yaw)
+        self.last_a = self.state[0]
+        self.csv_writer.writerow([self.x, self.y])
+
+
+
+    def lidar_callback(self, msg):
+        self.laser_data = msg
+
 
     def controller(self):
-        """Hàm quản lý máy trạng thái tổng (Chạy 100Hz)"""
-        current_time = self.get_clock().now()
+        """Hàm quản lý vòng lặp chính"""
+        
+        # Tính khoảng cách và góc
+        theta_d, e_d = self.calculate_apf_heading()
+       
+        e_theta = theta_d - self.yaw
 
-        # Khởi tạo lần chạy đầu tiên
-        if self.t_start_move is None:
-            self.t_start_move = current_time
-            self.start_a = self.state[0]
+        # [-pi, pi]
+        while e_theta > math.pi: e_theta -= 2.0 * math.pi
+        while e_theta < -math.pi: e_theta += 2.0 * math.pi
 
         if self.robot_state == 'MOVING':
-            # Quy đổi sang mm để tính toán khoảng cách nội bộ nhằm đảm bảo độ chính xác không gian tuyệt đối
-            distance_mm = (self.state[0] - self.start_a) * 1000.0
-            
-            if distance_mm >= 1000.0:  # Đã đi đủ 2 mét
+            if e_d <= 0.07: 
                 self.robot_state = 'STOPPED'
-                self.t_start_stop = current_time
-                self.stop_a = self.state[0] # Chốt vị trí hiện tại để giữ thăng bằng
+                self.stop_a = self.state[0]
+                self.stop_yaw = self.yaw
+                self.get_logger().info("\nĐÃ ĐẾN ĐÍCH\n")
             else:
-                self.go_control_loop(current_time)
+                self.go_to_goal(e_d, e_theta)
 
         elif self.robot_state == 'STOPPED':
-            # Tính thời gian đã dừng
-            t_stop = (current_time - self.t_start_stop).nanoseconds / 1e9
+            self.stop_control()
+
+# thuat toan apf
+    def calculate_apf_heading(self):
+        
+        # 1. LỰC HÚT TỪ ĐÍCH
+        e_x = self.target_x - self.x
+        e_y = self.target_y - self.y
+        d_goal = math.hypot(e_x, e_y)
+        
+        F_x = self.K_att * e_x
+        F_y = self.K_att * e_y
+
+        # 2. LỰC ĐẨY TỪ BỨC TƯỜNG
+        if self.laser_data is not None:
+            msg = self.laser_data
+            current_angle = msg.angle_min
+            step = 5  # cứ cách 5 tia thì lấy 1 tia để tính toán lực
             
-            if t_stop >= 1.0: # Đã dừng đủ 1 giây
-                self.robot_state = 'MOVING'
-                self.t_start_move = current_time
-                self.start_a = self.state[0] # Thiết lập mốc 0 mới cho chặng 2m tiếp theo
-            else:
-                self.stop_controll()
+            # luuc day duoc tinh bang tổng các lực tương ứng với từng tia chiếu của lidar 
+            for i in range(0, len(msg.ranges), step):
+                r = msg.ranges[i]
+                
+                if msg.range_min < r < self.d0 and not math.isnan(r) and not math.isinf(r):
+                    
+                    # Góc của tia sáng
+                    global_angle = self.yaw + current_angle
+                    
+                    # Tọa độ thực của điểm chạm trên tường
+                    # obs_x = self.x + r * math.cos(global_angle)
+                    # obs_y = self.y + r * math.sin(global_angle)
+                    
+                    # Vector đẩy dội ngược từ tường về phía xe
+                    dx = -r * math.cos(global_angle)
+                    dy = -r * math.sin(global_angle)
+                    d_obs = math.hypot(dx, dy)
+                    
+                    if 0 < d_obs < self.d0:
+                        rep_magnitude = self.K_rep * (1.0 / d_obs - 1.0 / self.d0) * (1.0 / d_obs**2)
+                        
+                        F_x += rep_magnitude * (dx / d_obs)
+                        F_y += rep_magnitude * (dy / d_obs)
+                
+                current_angle += msg.angle_increment * step
 
-    def go_control_loop(self, current_time):
-        """Điều khiển bám quỹ đạo w trong chặng 2m"""
-        # Tính thời gian t nội bộ của riêng đoạn đường này
-        t = (current_time - self.t_start_move).nanoseconds / 1e9
-        w = np.array([0.00, 0.01*t, 0.01, 0])
+        # tạo hướng mới
+        theta_d_new = math.atan2(F_y, F_x)
+        return theta_d_new, d_goal
+                
 
-        # TẠO TRẠNG THÁI ẢO: Xem vị trí bắt đầu đoạn đường này là 0m
+    def go_to_goal(self, e_d, e_theta):
+        v_ref = self.constant_v * max(0, math.cos(e_theta)) 
+        
+        omega_ref = self.K_omega * e_theta
+        u_yaw = self.K_yaw_rate * (omega_ref - self.yaw_dot)
+
         virtual_state = np.copy(self.state)
-        virtual_state[0] = self.state[0] - self.start_a 
+        virtual_state[0] = 0.0 
+        
+        u_bal = np.dot(self.K1, virtual_state)
+        u_fwd = self.K_fwd * (v_ref - virtual_state[1])
+        
+        u_total = u_bal + u_fwd
+        u_left = (u_bal + u_fwd) / 2.0 + u_yaw
+        u_right = (u_bal + u_fwd) / 2.0 - u_yaw
 
-        if virtual_state[0]==0 and virtual_state[1]==0 and virtual_state[2]==0 and virtual_state[3]==0:
-            u = 0
-        else:
-            u_x = np.dot(self.K1, virtual_state)
-            u_w = np.dot(self.K2, w)
-            u = u_x + u_w
+        self.publish_torque(u_left, u_right, f"MOVING | Đích: {e_d:.2f}m | Lệch: {math.degrees(e_theta):.0f}°")
 
-        self.publish_torque(u, virtual_state[0], "MOVING")
-
-    def stop_controll(self):
-        """Giữ thăng bằng tại chỗ"""
-        # TẠO TRẠNG THÁI ẢO: Xem vị trí đang đứng là điểm 0 lý tưởng để LQR không kéo xe giật lùi
+    def stop_control(self):
         virtual_state = np.copy(self.state)
         virtual_state[0] = self.state[0] - self.stop_a
 
-        # Khi dừng, ta không có quỹ đạo w (u_w = 0)
-        u = np.dot(self.K1, virtual_state)
-        
-        self.publish_torque(u, self.state[0], "STOPPED")
+        u_bal = np.dot(self.K1, virtual_state)
 
-    def publish_torque(self, u, display_pos, mode):
-        tau_each_wheel = u / 2.0
+        e_theta = self.stop_yaw - self.yaw
+        while e_theta > math.pi: e_theta -= 2.0 * math.pi
+        while e_theta < -math.pi: e_theta += 2.0 * math.pi
+
+        omega_ref = self.K_omega * e_theta
+        u_yaw = self.K_yaw_rate * (omega_ref - self.yaw_dot)
+
+        u_left = (u_bal / 2.0) + u_yaw
+        u_right = (u_bal / 2.0) - u_yaw
+
+        self.publish_torque(u_left, u_right, "STOPPED")
+
+    def publish_torque(self, u_left, u_right, mode):
+        # đề phòng trường hợp lực bị vung lên quá lớn hoặc không có giá trị (Nan)
+        if math.isnan(u_left) or math.isinf(u_left) or math.isnan(u_right) or math.isinf(u_right):
+            return
+
         max_tau = 0.4
-        tau_each_wheel = max(min(tau_each_wheel, max_tau), -max_tau)
+        u_left = max(min(u_left, max_tau), -max_tau)
+        u_right = max(min(u_right, max_tau), -max_tau)
         
-        force_msg = Float64()
-        force_msg.data = tau_each_wheel
-        self.left_force_pub.publish(force_msg)
-        self.right_force_pub.publish(force_msg)
+        msg_left = Float64()
+        msg_left.data = u_left
+        self.left_force_pub.publish(msg_left)
 
-        log_msg = (
-            f"\n--- MODE: {mode} ---\n"
-            f"tọa độ x đạt được: {self.state[0]}"
-        )
-        self.get_logger().info(log_msg)
+        msg_right = Float64()
+        msg_right.data = u_right
+        self.right_force_pub.publish(msg_right)
+
+        log_msg = (f"[{mode}] X={self.x:.2f}, Y={self.y:.2f} | Góc={math.degrees(self.yaw):.0f}°")
+        
+        self.log_counter += 1
+        if self.log_counter % 20 == 0:
+            self.get_logger().info(log_msg)
+    
+    def destroy_node(self):
+        self.csv_file.close()
+        super().destroy_node()
 
 def main(args=None):
     rclpy.init(args=args)
